@@ -128,9 +128,3 @@ The gateway adds `gateway.admission.refusals.total`, by procedure and code, and
 `gateway.forwarding.errors.total`, by procedure and code. Its diagnostics report
 grpcd by asking grpcd's own health over the connection, and each admission
 service from the replica its procedure is on.
-
-## What the Gateway Is Not
-
-It does no authentication or authorization of its own, no protocol transcoding,
-no body inspection, no retries, and does not register with grpcd: nothing routes
-to it.
