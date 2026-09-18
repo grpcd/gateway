@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [default]
+    paths-ignore:
+      - CHANGELOG.md
+
+jobs:
+  commit-check:
+    name: CI
+    uses: katastroma/skeuotheke/.github/workflows/commit-check.yaml@v0
+
+  version-check:
+    name: CI
+    uses: katastroma/skeuotheke/.github/workflows/version-check.yaml@v0
+
+  ci-go:
+    name: CI
+    uses: katastroma/skeuotheke/.github/workflows/ci-go.yaml@v0
+
+  version:
+    name: CI
+    needs: [commit-check, version-check, ci-go]
+    uses: katastroma/skeuotheke/.github/workflows/version.yaml@v0
+    permissions:
+      contents: write
+    with:
+      GH_APP_ID: ${{ vars.SKEUOTHEKE_GH_APP_CLIENT_ID }}
+    secrets:
+      GH_APP_PRIVATE_KEY: ${{ secrets.SKEUOTHEKE_GH_APP_PRIVATE_KEY }}

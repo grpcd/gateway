@@ -1,0 +1,14 @@
+name: CD
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*.*.*'
+      - '!v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: katastroma/skeuotheke/.github/workflows/release-tag.yaml@v0
