@@ -19,7 +19,7 @@ func echo(ran *bool) http.Handler {
 }
 
 func TestCORS(t *testing.T) {
-	policy := CORS([]string{origin}, []string{"Authorization"})
+	policy := CORS(CORSConfiguration{AllowedOrigins: []string{origin}, AllowedHeaders: []string{"Authorization"}})
 
 	t.Run("answers a preflight without reaching the handler", func(t *testing.T) {
 		ran := false

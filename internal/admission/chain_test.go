@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect/v2"
+	"github.com/caarlos0/env/v11"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/pbrpc/otel-testing/mocks/meter"
@@ -258,21 +259,28 @@ func TestNew(t *testing.T) {
 	})
 }
 
-func TestParse(t *testing.T) {
-	cases := map[string][]string{
-		"":                                 nil,
-		" , ,":                             nil,
-		authenticate:                       {authenticate},
-		authenticate + "," + limit:         {authenticate, limit},
-		" " + authenticate + " , " + limit: {authenticate, limit},
-		authenticate + ",," + limit + ",":  {authenticate, limit},
-	}
+func TestConfiguration(t *testing.T) {
+	t.Run("reads the procedures in order", func(t *testing.T) {
+		t.Setenv("GATEWAY_ADMISSION", authenticate+","+limit)
 
-	for value, want := range cases {
-		t.Run(value, func(t *testing.T) {
-			if got := Parse(value); !slices.Equal(got, want) {
-				t.Errorf("Parse(%q) = %v, want %v", value, got, want)
-			}
-		})
-	}
+		configured, err := env.ParseAs[Configuration]()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := []string{authenticate, limit}; !slices.Equal(configured.Procedures, want) {
+			t.Errorf("procedures = %v, want %v", configured.Procedures, want)
+		}
+	})
+
+	t.Run("reads none when the variable is empty", func(t *testing.T) {
+		t.Setenv("GATEWAY_ADMISSION", "")
+
+		configured, err := env.ParseAs[Configuration]()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(configured.Procedures) != 0 {
+			t.Errorf("procedures = %v, want none", configured.Procedures)
+		}
+	})
 }

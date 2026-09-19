@@ -103,8 +103,8 @@ once.
 
 - `GRPCD_ADDRESS` — the grpcd service, `host:port`. Required: a gateway routes
   nothing without discovery.
-- `GATEWAY_ADMISSION` — admission procedures, comma-separated, in order. Unset
-  means every request is admitted as it arrived.
+- `GATEWAY_ADMISSION` — admission procedures, comma-separated with no spaces,
+  in order. Unset means every request is admitted as it arrived.
 - `GRPC_SERVER_ADDRESS` — the listen address, `:50051` by default.
 - `TLS_CERT`, `TLS_KEY` — the listener's certificate and key as PEM. Unset means
   the listener is cleartext, for a TLS terminator in front of it.
@@ -112,10 +112,10 @@ once.
   it signed, which is how the origin is closed to anything but the terminator.
   Each holds the material itself, not a path.
 - `CORS_ALLOWED_ORIGINS` — browser origins allowed to call the gateway,
-  comma-separated, for a frontend served from another origin. Unset means no
-  cross-origin handling. `CORS_ALLOWED_HEADERS` — request headers a browser may
-  send beyond the Connect protocols' own, comma-separated; `Authorization` is
-  the usual one.
+  comma-separated with no spaces, for a frontend served from another origin.
+  Unset means no cross-origin handling. `CORS_ALLOWED_HEADERS` — request
+  headers a browser may send beyond the Connect protocols' own, comma-separated
+  with no spaces; `Authorization` is the usual one.
 - `SERVICE_NAME`, `SERVICE_VERSION`, `MAX_CONNECTION_IDLE`,
   `HTTP_SERVER_IDLE_TIMEOUT` `HTTP2_SEND_PING_TIMEOUT`, `HTTP2_PING_TIMEOUT`,
   `OTEL_*`, `LOG_FORMAT` — as every service in the

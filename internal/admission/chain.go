@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strings"
 
 	"connectrpc.com/connect/v2"
 	"go.opentelemetry.io/otel/attribute"
@@ -59,18 +58,11 @@ func New(procedures []string, caller Caller, log *slog.Logger, meter metric.Mete
 	return &Chain{steps: steps, caller: caller, log: log, refusals: refusals}
 }
 
-// Parse reads the procedure list GATEWAY_ADMISSION holds: comma-separated,
-// in order, blanks ignored.
-func Parse(value string) []string {
-	var procedures []string
-
-	for part := range strings.SplitSeq(value, ",") {
-		if procedure := strings.TrimSpace(part); procedure != "" {
-			procedures = append(procedures, procedure)
-		}
-	}
-
-	return procedures
+// Configuration is the admission chain's: the procedures a request passes
+// through, in order, comma-separated with no surrounding whitespace. Unset
+// or empty is no admission.
+type Configuration struct {
+	Procedures []string `env:"GATEWAY_ADMISSION"`
 }
 
 // Admit consults each admission service in order with r's procedure, headers,

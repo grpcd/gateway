@@ -32,21 +32,6 @@ import (
 	"github.com/grpcd/gateway/internal/proxy"
 )
 
-// Environment variable names for the gateway's own configuration.
-const (
-	// EnvAdmission lists the admission procedures, comma-separated, in the
-	// order every request passes through them. Unset means none.
-	EnvAdmission = "GATEWAY_ADMISSION"
-
-	// EnvCORSAllowedOrigins lists the browser origins allowed to call the
-	// gateway, comma-separated. Unset means no cross-origin handling.
-	EnvCORSAllowedOrigins = "CORS_ALLOWED_ORIGINS"
-
-	// EnvCORSAllowedHeaders lists request headers a browser may send beyond
-	// the protocols' own, comma-separated; Authorization is the usual one.
-	EnvCORSAllowedHeaders = "CORS_ALLOWED_HEADERS"
-)
-
 // cleanupTimeout bounds stopping the server and flushing telemetry, together.
 const cleanupTimeout = 5 * time.Second
 
@@ -76,13 +61,16 @@ func Run() int {
 
 	opts := []server.Option{}
 
+	corsCfg, err := env.ParseAs[proxy.CORSConfiguration]()
+	if err != nil {
+		log.Error("Could not read CORS configuration", slog.Any("error", err))
+		return 1
+	}
+
 	// Route middleware runs on every route on the mux, the gateway's own
 	// endpoints and the proxy alike, so one policy answers every preflight.
-	if origins := admission.Parse(os.Getenv(EnvCORSAllowedOrigins)); len(origins) > 0 {
-		admissions := admission.Parse(os.Getenv(EnvCORSAllowedHeaders))
-		cors := proxy.CORS(origins, admissions)
-		mw := server.WithRouteMiddleware(cors)
-		opts = append(opts, mw)
+	if len(corsCfg.AllowedOrigins) > 0 {
+		opts = append(opts, server.WithRouteMiddleware(proxy.CORS(corsCfg)))
 	}
 
 	host, err := connectserver.FromEnv(log, opts...)
@@ -121,7 +109,13 @@ func Run() int {
 
 	meter := otel.Meter(svcCfg.Name)
 
-	procedures := admission.Parse(os.Getenv(EnvAdmission))
+	admissionCfg, err := env.ParseAs[admission.Configuration]()
+	if err != nil {
+		log.Error("Could not read admission configuration", slog.Any("error", err))
+		return 1
+	}
+
+	procedures := admissionCfg.Procedures
 	cnClient := connectclient.New(httpClient, discover.BaseURL, nil)
 	chain := admission.New(procedures, cnClient, log, meter)
 
