@@ -134,16 +134,10 @@ func Run() int {
 
 		checks[procedure] = diagnostics.NewUpstreamCheck(httpClient, upstream)
 
-		// The wait for a grpcd that cannot be reached, or an admission
-		// service nothing has registered yet, is not the listener's to bear:
-		// a resolution that fails here is logged, and the first admission
-		// call resolves again.
-		go func() {
-			if err = upstream.Resolve(serveCtx); err != nil {
-				log.Warn("Admission service not resolved at startup",
-					slog.String("procedure", procedure), slog.Any("error", err))
-			}
-		}()
+		// Held for the life of the process: resolved now, and again whenever
+		// the replica held is dropped, with or without a request arriving to
+		// ask.
+		go upstream.Hold(serveCtx)
 	}
 
 	if _, err = service.Register(

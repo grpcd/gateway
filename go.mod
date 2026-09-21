@@ -7,7 +7,7 @@ require (
 	connectrpc.com/cors v0.1.0
 	git.sonicoriginal.software/logger v0.1.0
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/grpcd/connect-client v0.8.3
+	github.com/grpcd/connect-client v0.9.0
 	github.com/grpcd/protos v0.9.1
 	github.com/pbrpc/connect-client v0.1.1
 	github.com/pbrpc/connect-server v0.1.1
