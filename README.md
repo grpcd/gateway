@@ -116,8 +116,8 @@ once.
   Unset means no cross-origin handling. `CORS_ALLOWED_HEADERS` — request
   headers a browser may send beyond the Connect protocols' own, comma-separated
   with no spaces; `Authorization` is the usual one.
-- `SERVICE_NAME`, `SERVICE_VERSION`, `MAX_CONNECTION_IDLE`,
-  `HTTP_SERVER_IDLE_TIMEOUT` `HTTP2_SEND_PING_TIMEOUT`, `HTTP2_PING_TIMEOUT`,
+- `SERVICE_NAME`, `SERVICE_VERSION`, `HOST_IDLE_TIMEOUT`,
+  `HTTP2_SEND_PING_TIMEOUT`, `HTTP2_PING_TIMEOUT`,
   `OTEL_*`, `LOG_FORMAT` — as every service in the
   [pbrpb ecosystem](https://github.com/pbrpc).
 
