@@ -10,9 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"uuid"
 
 	"github.com/caarlos0/env/v11"
-	"github.com/google/uuid"
 
 	connectclient "github.com/pbrpc/connect-client"
 	connectserver "github.com/pbrpc/connect-server"
@@ -54,7 +54,7 @@ func Run() int {
 
 	// The instance id names this process on every span, log line, and metric
 	// for as long as it runs.
-	log, flush, err := pbrpcotel.Init(ctx, svcCfg.Name, svcCfg.Version, uuid.NewString())
+	log, flush, err := pbrpcotel.Init(ctx, svcCfg.Name, svcCfg.Version, uuid.New().String())
 	if err != nil {
 		log.Error("Failed to initialize telemetry", slog.Any("error", err))
 		return 1
