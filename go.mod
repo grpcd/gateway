@@ -17,7 +17,7 @@ require (
 	github.com/pbrpc/http-server v0.3.1
 	github.com/pbrpc/http-transport v0.3.0
 	github.com/pbrpc/lifecycle v0.2.0
-	github.com/pbrpc/otel v0.4.0
+	github.com/pbrpc/otel v0.4.1
 	github.com/pbrpc/otel-testing v0.1.0
 	github.com/pbrpc/service v0.2.0
 	github.com/pbrpc/testing v0.1.0
@@ -52,7 +52,7 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260918162117-cecb64721679 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260918162117-cecb64721679 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260921155816-b14227669459 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 )
