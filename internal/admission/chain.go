@@ -10,13 +10,16 @@ import (
 	"slices"
 
 	"connectrpc.com/connect/v2"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 
 	"git.sonicoriginal.software/logger"
 
 	admissionpb "github.com/grpcd/protos/admission"
+	connectotel "github.com/pbrpc/connect-otel"
 )
+
+// tracerName is this package's instrumentation scope.
+const tracerName = "grpcd/gateway/internal/admission"
 
 // Caller makes the unary call to an admission service. A *connect.Client
 // built against discover.BaseURL is one: the procedure in the Spec is what
@@ -30,32 +33,22 @@ type Chain struct {
 	steps  []connect.Spec
 	caller Caller
 	log    *slog.Logger
-
-	refusals metric.Int64Counter
 }
 
 // New builds the chain for procedures, in the order given, called over
 // caller. An empty list admits everything.
-func New(procedures []string, caller Caller, log *slog.Logger, meter metric.Meter) *Chain {
+func New(procedures []string, caller Caller, log *slog.Logger) *Chain {
 	if log == nil {
 		log = logger.NewNullLogger()
 	}
 
 	steps := make([]connect.Spec, 0, len(procedures))
 	for _, procedure := range procedures {
-		steps = append(steps, connect.Spec{StreamType: connect.StreamTypeUnary, Procedure: procedure})
+		spec := connect.Spec{StreamType: connect.StreamTypeUnary, Procedure: procedure}
+		steps = append(steps, spec)
 	}
 
-	refusals, err := meter.Int64Counter(
-		"gateway.admission.refusals.total",
-		metric.WithDescription("Total number of requests refused by an admission service"),
-		metric.WithUnit("{request}"),
-	)
-	if err != nil {
-		log.Error("Failed to create admission refusals metric", slog.Any("error", err))
-	}
-
-	return &Chain{steps: steps, caller: caller, log: log, refusals: refusals}
+	return &Chain{steps: steps, caller: caller, log: log}
 }
 
 // Configuration is the admission chain's: the procedures a request passes
@@ -72,39 +65,56 @@ type Configuration struct {
 // reached, and r is not to be forwarded.
 func (c *Chain) Admit(ctx context.Context, r *http.Request) error {
 	for _, spec := range c.steps {
-		var response admissionpb.AdmissionResponse
-
-		if err := c.caller.CallUnary(ctx, spec, request(r), &response); err != nil {
-			return c.refuse(ctx, spec.Procedure, err)
+		if err := c.admit(ctx, spec, r); err != nil {
+			return err
 		}
-
-		apply(r, &response)
 	}
 
 	return nil
 }
 
-// refuse turns err into the refusal answered to the client, and counts it.
+// admit asks one admission service, under an `admit` span naming the
+// service's procedure, and applies its answer to r.
+func (c *Chain) admit(ctx context.Context, spec connect.Spec, r *http.Request) error {
+	ctxSpan := trace.SpanFromContext(ctx)
+	tracer := ctxSpan.TracerProvider().Tracer(tracerName)
+	ctx, span := tracer.Start(ctx, "admit")
+	defer span.End()
+
+	connectotel.Name(span, spec.Procedure)
+
+	var response admissionpb.AdmissionResponse
+
+	if err := c.caller.CallUnary(ctx, spec, request(r), &response); err != nil {
+		return c.refuse(ctx, spec.Procedure, err)
+	}
+
+	apply(r, &response)
+
+	return nil
+}
+
+// refuse turns err into the refusal answered to the client, and records it
+// on the admission call's span.
 func (c *Chain) refuse(ctx context.Context, procedure string, err error) error {
-	var connectErr *connect.Error
-	if !errors.As(err, &connectErr) {
+	if _, ok := errors.AsType[*connect.Error](err); !ok {
 		// The service was not reached, or answered outside the protocol;
 		// either way nothing admitted the request. What it answered with, if
 		// anything, stays local.
-		err = connect.NewError(connect.CodeUnavailable, "admission service unavailable").WithCause(err)
+		err = connect.NewError(
+			connect.CodeUnavailable,
+			"admission service unavailable",
+		).WithCause(err)
 	}
 
 	code := connect.CodeOf(err)
 
 	c.log.InfoContext(ctx, "Admission refused",
-		slog.String("procedure", procedure), slog.String("code", code.String()), slog.Any("error", err))
+		slog.String("procedure", procedure),
+		slog.String("code", code.String()),
+		slog.Any("error", err))
 
-	if c.refusals != nil {
-		c.refusals.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("procedure", procedure),
-			attribute.String("code", code.String()),
-		))
-	}
+	connectotel.Fail(trace.SpanFromContext(ctx), code)
 
 	return err
 }

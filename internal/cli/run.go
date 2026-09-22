@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
-	"go.opentelemetry.io/otel"
+	"github.com/google/uuid"
 
 	connectclient "github.com/pbrpc/connect-client"
 	connectserver "github.com/pbrpc/connect-server"
@@ -52,7 +52,9 @@ func Run() int {
 
 	stack := lifecycle.Stack{}
 
-	log, flush, err := pbrpcotel.Init(ctx, svcCfg.Name, svcCfg.Version)
+	// The instance id names this process on every span, log line, and metric
+	// for as long as it runs.
+	log, flush, err := pbrpcotel.Init(ctx, svcCfg.Name, svcCfg.Version, uuid.NewString())
 	if err != nil {
 		log.Error("Failed to initialize telemetry", slog.Any("error", err))
 		return 1
@@ -107,8 +109,6 @@ func Run() int {
 	discovery := discover.New(serveCtx, log, conn, pbrpcotel.NewTransport(base))
 	httpClient := &http.Client{Transport: discovery.Held()}
 
-	meter := otel.Meter(svcCfg.Name)
-
 	admissionCfg, err := env.ParseAs[admission.Configuration]()
 	if err != nil {
 		log.Error("Could not read admission configuration", slog.Any("error", err))
@@ -117,7 +117,7 @@ func Run() int {
 
 	procedures := admissionCfg.Procedures
 	cnClient := connectclient.New(httpClient, discover.BaseURL, nil)
-	chain := admission.New(procedures, cnClient, log, meter)
+	chain := admission.New(procedures, cnClient, log)
 
 	// grpcd is asked its own health over the connection, and each admission
 	// service is reported from the replica its procedure is on.
@@ -153,7 +153,7 @@ func Run() int {
 
 	// The gateway's own routes are longer patterns than "/", so the mux gives
 	// them precedence and everything else is forwarded.
-	host.HTTPHost.Mux.Handle("/", proxy.New(discovery, chain.Admit, log, meter))
+	host.HTTPHost.Mux.Handle("/", proxy.New(discovery, chain.Admit, log))
 
 	lis, err := net.Listen("tcp", svcCfg.Address)
 	if err != nil {

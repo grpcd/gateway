@@ -10,8 +10,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect/v2"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 
-	"github.com/pbrpc/otel-testing/mocks/meter"
+	"github.com/pbrpc/otel-testing/mocks/tracer"
 	"github.com/pbrpc/testing/mocks/responsewriter"
 	"github.com/pbrpc/testing/mocks/roundtripper"
 
@@ -21,6 +25,64 @@ import (
 const procedure = "/pkg.Service/Method"
 
 var errUnreachable = errors.New("connection refused")
+
+// hasAttribute reports whether attrs carries want.
+func hasAttribute(attrs []attribute.KeyValue, want attribute.KeyValue) bool {
+	for _, attr := range attrs {
+		if attr.Key == want.Key && attr.Value == want.Value {
+			return true
+		}
+	}
+
+	return false
+}
+
+// spanNamed answers with the recorded span called name, failing the test
+// when there is not exactly one.
+func spanNamed(t *testing.T, spans tracetest.SpanStubs, name string) tracetest.SpanStub {
+	t.Helper()
+
+	var found []tracetest.SpanStub
+
+	for _, span := range spans {
+		if span.Name == name {
+			found = append(found, span)
+		}
+	}
+
+	if len(found) != 1 {
+		t.Fatalf("recorded %d spans named %q, want 1", len(found), name)
+	}
+
+	return found[0]
+}
+
+// assertRPC fails the test unless span names the procedure.
+func assertRPC(t *testing.T, span tracetest.SpanStub) {
+	t.Helper()
+
+	for _, want := range []attribute.KeyValue{
+		semconv.RPCSystemConnectRPC,
+		semconv.RPCService("pkg.Service"),
+		semconv.RPCMethod("Method"),
+	} {
+		if !hasAttribute(span.Attributes, want) {
+			t.Errorf("%s attributes = %v, want %v", span.Name, span.Attributes, want)
+		}
+	}
+}
+
+// assertFailed fails the test unless span carries code and an error status.
+func assertFailed(t *testing.T, span tracetest.SpanStub, code string) {
+	t.Helper()
+
+	if !hasAttribute(span.Attributes, semconv.RPCConnectRPCErrorCodeKey.String(code)) {
+		t.Errorf("%s attributes = %v, want the %s code", span.Name, span.Attributes, code)
+	}
+	if span.Status.Code != codes.Error {
+		t.Errorf("%s status = %v, want error", span.Name, span.Status.Code)
+	}
+}
 
 // replica stands in for the discovery transport with a replica behind it
 // that answers every request, recording what it was handed.
@@ -56,7 +118,7 @@ func serve(t *testing.T, transport http.RoundTripper, admit Admit, request *http
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	New(transport, admit, slog.New(slog.DiscardHandler), meter.New()).ServeHTTP(recorder, request)
+	New(transport, admit, slog.New(slog.DiscardHandler)).ServeHTTP(recorder, request)
 
 	return recorder
 }
@@ -65,11 +127,28 @@ func serve(t *testing.T, transport http.RoundTripper, admit Admit, request *http
 func newRequest(t *testing.T, contentType string) *http.Request {
 	t.Helper()
 
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, procedure, strings.NewReader("message"))
+	return newRequestWithContext(t.Context(), contentType)
+}
+
+// newRequestWithContext builds a Connect-protocol call to procedure with a
+// body, arriving on ctx.
+func newRequestWithContext(ctx context.Context, contentType string) *http.Request {
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, procedure, strings.NewReader("message"))
 	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Authorization", "Bearer token")
 
 	return request
+}
+
+// tracedRequest builds a request arriving under a recorded span, the way the
+// HTTP layer starts one per request, and answers with the recorder.
+func tracedRequest(t *testing.T, contentType string) (*tracer.Mock, *http.Request) {
+	t.Helper()
+
+	tt, ctx := tracer.New(t)
+	t.Cleanup(func() { tt.Shutdown(t) })
+
+	return tt, newRequestWithContext(ctx, contentType)
 }
 
 func TestServeHTTP(t *testing.T) {
@@ -186,20 +265,15 @@ func TestServeHTTP(t *testing.T) {
 	})
 
 	t.Run("answers unavailable when the replica cannot be reached", func(t *testing.T) {
-		m := meter.New()
 		transport := failing(errUnreachable)
 
-		recorder := httptest.NewRecorder()
-		New(transport, admitAll, slog.New(slog.DiscardHandler), m).ServeHTTP(recorder, newRequest(t, "application/json"))
+		recorder := serve(t, transport, admitAll, newRequest(t, "application/json"))
 
 		if recorder.Code != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503", recorder.Code)
 		}
 		if !strings.Contains(recorder.Body.String(), `"unavailable"`) {
 			t.Errorf("body = %q, want unavailable", recorder.Body.String())
-		}
-		if got := m.GetCounter("gateway.forwarding.errors.total").Value(); got != 1 {
-			t.Errorf("forwarding errors = %d, want 1", got)
 		}
 	})
 
@@ -223,21 +297,87 @@ func TestServeHTTP(t *testing.T) {
 		transport := failing(errUnreachable)
 
 		w := responsewriter.NewBroken()
-		New(transport, admitAll, slog.New(slog.DiscardHandler), meter.New()).ServeHTTP(w, newRequest(t, "application/json"))
+		New(transport, admitAll, slog.New(slog.DiscardHandler)).ServeHTTP(w, newRequest(t, "application/json"))
 
 		if w.Status != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503 attempted", w.Status)
 		}
 	})
+
+	t.Run("names the RPC on the request's span and forwards under a span of its own", func(t *testing.T) {
+		tt, request := tracedRequest(t, "application/json")
+
+		serve(t, replica(), admitAll, request)
+		tt.EndSpan()
+
+		spans := tt.GetSpans()
+
+		forward := spanNamed(t, spans, "forward")
+		assertRPC(t, forward)
+		if forward.Status.Code != codes.Unset {
+			t.Errorf("forward status = %v, want unset", forward.Status.Code)
+		}
+
+		server := spanNamed(t, spans, "test-span")
+		assertRPC(t, server)
+		if forward.Parent.SpanID() != server.SpanContext.SpanID() {
+			t.Error("forward span is not under the request's span")
+		}
+	})
+
+	t.Run("fails the forward span with the code a failed forward answers", func(t *testing.T) {
+		cases := map[string]struct {
+			err  error
+			code string
+		}{
+			"unreachable":  {err: errUnreachable, code: "unavailable"},
+			"no procedure": {err: discover.ErrNoProcedure, code: "unimplemented"},
+		}
+
+		for name, c := range cases {
+			t.Run(name, func(t *testing.T) {
+				tt, request := tracedRequest(t, "application/json")
+
+				serve(t, failing(c.err), admitAll, request)
+				tt.EndSpan()
+
+				spans := tt.GetSpans()
+
+				assertFailed(t, spanNamed(t, spans, "forward"), c.code)
+
+				// The request's own span answers with what the HTTP layer
+				// observes; the forward is what failed.
+				if server := spanNamed(t, spans, "test-span"); server.Status.Code != codes.Unset {
+					t.Errorf("request span status = %v, want unset", server.Status.Code)
+				}
+			})
+		}
+	})
+
+	t.Run("fails the request's span with a refusal and starts no forward", func(t *testing.T) {
+		refuse := func(context.Context, *http.Request) error {
+			return connect.NewError(connect.CodeUnauthenticated, "bad token")
+		}
+
+		tt, request := tracedRequest(t, "application/json")
+
+		serve(t, replica(), refuse, request)
+		tt.EndSpan()
+
+		spans := tt.GetSpans()
+		if len(spans) != 1 {
+			t.Fatalf("recorded %d spans, want the request's alone", len(spans))
+		}
+
+		assertRPC(t, spans[0])
+		assertFailed(t, spans[0], "unauthenticated")
+	})
 }
 
 func TestNew(t *testing.T) {
-	t.Run("substitutes a logger and survives a failed metric", func(t *testing.T) {
-		m := meter.New()
-		m.SetInt64CounterError(errors.New("no meter"))
-
+	t.Run("substitutes a logger", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
-		New(failing(errUnreachable), admitAll, nil, m).ServeHTTP(recorder, newRequest(t, "application/json"))
+		New(failing(errUnreachable), admitAll, nil).ServeHTTP(recorder, newRequest(t, "application/json"))
 
 		if recorder.Code != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503", recorder.Code)

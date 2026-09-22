@@ -123,8 +123,20 @@ once.
 
 ## Observability
 
-Request counts and durations come from the HTTP instrumentation on every route.
-The gateway adds `gateway.admission.refusals.total`, by procedure and code, and
-`gateway.forwarding.errors.total`, by procedure and code. Its diagnostics report
-grpcd by asking grpcd's own health over the connection, and each admission
-service from the replica its procedure is on.
+The gateway declares no metrics. Every request's span is named by the RPC the
+client asked for (`rpc.service`, `rpc.method`), and under it:
+
+- `admit`: one per admission service consulted, named by that service's
+  procedure, failed with the refusal's code (`rpc.connect_rpc.error_code`)
+- `forward`: the request carried to the replica, named by the procedure as
+  admission left it, failed with `unavailable` or `unimplemented` when the
+  transport could not carry it
+
+A refusal also fails the request's own span with its code. A collector's
+`spanmetrics` connector over `rpc.service`, `rpc.method`, and
+`rpc.connect_rpc.error_code` counts refusals and failed forwards by procedure
+and code, and times every forward. Every span, log line, and metric carries
+the process's `service.instance.id`.
+
+Its diagnostics report grpcd by asking grpcd's own health over the connection,
+and each admission service from the replica its procedure is on.

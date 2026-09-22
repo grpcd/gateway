@@ -14,9 +14,12 @@ import (
 
 	"connectrpc.com/connect/v2"
 	"github.com/caarlos0/env/v11"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/pbrpc/otel-testing/mocks/meter"
+	"github.com/pbrpc/otel-testing/mocks/tracer"
 
 	admissionpb "github.com/grpcd/protos/admission"
 )
@@ -79,9 +82,20 @@ func (s *callerStub) received() []recorded {
 func admit(t *testing.T, procedures []string, stub *callerStub, r *http.Request) (*http.Request, error) {
 	t.Helper()
 
-	chain := New(procedures, stub, slog.New(slog.DiscardHandler), meter.New())
+	chain := New(procedures, stub, slog.New(slog.DiscardHandler))
 
 	return r, chain.Admit(t.Context(), r)
+}
+
+// hasAttribute reports whether attrs carries want.
+func hasAttribute(attrs []attribute.KeyValue, want attribute.KeyValue) bool {
+	for _, attr := range attrs {
+		if attr.Key == want.Key && attr.Value == want.Value {
+			return true
+		}
+	}
+
+	return false
 }
 
 func newRequest(t *testing.T) *http.Request {
@@ -216,9 +230,8 @@ func TestAdmit(t *testing.T) {
 	t.Run("answers the service's refusal and stops there", func(t *testing.T) {
 		refusal := connect.NewError(connect.CodeUnauthenticated, "bad token")
 		stub := &callerStub{answers: []answer{{err: refusal}}}
-		m := meter.New()
 
-		chain := New([]string{authenticate, limit}, stub, slog.New(slog.DiscardHandler), m)
+		chain := New([]string{authenticate, limit}, stub, slog.New(slog.DiscardHandler))
 
 		err := chain.Admit(t.Context(), newRequest(t))
 		if !errors.Is(err, refusal) {
@@ -227,8 +240,46 @@ func TestAdmit(t *testing.T) {
 		if len(stub.received()) != 1 {
 			t.Errorf("calls = %d, want the limiter never asked", len(stub.received()))
 		}
-		if got := m.GetCounter("gateway.admission.refusals.total").Value(); got != 1 {
-			t.Errorf("refusals = %d, want 1", got)
+	})
+
+	t.Run("runs each call under a span naming the service, failed by its refusal", func(t *testing.T) {
+		refusal := connect.NewError(connect.CodeUnauthenticated, "bad token")
+		stub := &callerStub{answers: []answer{{}, {err: refusal}}}
+
+		tt, ctx := tracer.New(t)
+		defer tt.Shutdown(t)
+
+		chain := New([]string{limit, authenticate}, stub, slog.New(slog.DiscardHandler))
+
+		if err := chain.Admit(ctx, newRequest(t)); !errors.Is(err, refusal) {
+			t.Fatalf("error = %v, want the refusal", err)
+		}
+
+		spans := tt.GetSpans()
+		if len(spans) != 2 {
+			t.Fatalf("recorded %d spans, want one per admission call", len(spans))
+		}
+
+		admitted, refused := spans[0], spans[1]
+
+		if admitted.Name != "admit" || refused.Name != "admit" {
+			t.Errorf("spans = %q, %q, want both named admit", admitted.Name, refused.Name)
+		}
+		if !hasAttribute(admitted.Attributes, semconv.RPCService("limits.Limiter")) ||
+			!hasAttribute(admitted.Attributes, semconv.RPCMethod("Check")) {
+			t.Errorf("attributes = %v, want the limiter named", admitted.Attributes)
+		}
+		if admitted.Status.Code != codes.Unset {
+			t.Errorf("admitted status = %v, want unset", admitted.Status.Code)
+		}
+		if !hasAttribute(refused.Attributes, semconv.RPCMethod("Authenticate")) {
+			t.Errorf("attributes = %v, want the authenticator named", refused.Attributes)
+		}
+		if !hasAttribute(refused.Attributes, semconv.RPCConnectRPCErrorCodeKey.String("unauthenticated")) {
+			t.Errorf("attributes = %v, want the unauthenticated code", refused.Attributes)
+		}
+		if refused.Status.Code != codes.Error {
+			t.Errorf("refused status = %v, want error", refused.Status.Code)
 		}
 	})
 
@@ -243,16 +294,11 @@ func TestAdmit(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	t.Run("substitutes a logger and survives a failed metric", func(t *testing.T) {
-		m := meter.New()
-		m.SetInt64CounterError(errors.New("no meter"))
-
+	t.Run("substitutes a logger", func(t *testing.T) {
 		stub := &callerStub{answers: []answer{{err: errors.New("down")}}}
 
-		chain := New([]string{authenticate}, stub, nil, m)
+		chain := New([]string{authenticate}, stub, nil)
 
-		// A refusal is counted only when the counter exists; with none, it
-		// is still answered.
 		if err := chain.Admit(t.Context(), newRequest(t)); connect.CodeOf(err) != connect.CodeUnavailable {
 			t.Fatalf("error = %v, want unavailable", err)
 		}
