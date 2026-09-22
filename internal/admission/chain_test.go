@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -82,7 +81,7 @@ func (s *callerStub) received() []recorded {
 func admit(t *testing.T, procedures []string, stub *callerStub, r *http.Request) (*http.Request, error) {
 	t.Helper()
 
-	chain := New(procedures, stub, slog.New(slog.DiscardHandler))
+	chain := New(procedures, stub)
 
 	return r, chain.Admit(t.Context(), r)
 }
@@ -231,7 +230,7 @@ func TestAdmit(t *testing.T) {
 		refusal := connect.NewError(connect.CodeUnauthenticated, "bad token")
 		stub := &callerStub{answers: []answer{{err: refusal}}}
 
-		chain := New([]string{authenticate, limit}, stub, slog.New(slog.DiscardHandler))
+		chain := New([]string{authenticate, limit}, stub)
 
 		err := chain.Admit(t.Context(), newRequest(t))
 		if !errors.Is(err, refusal) {
@@ -249,7 +248,7 @@ func TestAdmit(t *testing.T) {
 		tt, ctx := tracer.New(t)
 		defer tt.Shutdown(t)
 
-		chain := New([]string{limit, authenticate}, stub, slog.New(slog.DiscardHandler))
+		chain := New([]string{limit, authenticate}, stub)
 
 		if err := chain.Admit(ctx, newRequest(t)); !errors.Is(err, refusal) {
 			t.Fatalf("error = %v, want the refusal", err)
@@ -288,18 +287,6 @@ func TestAdmit(t *testing.T) {
 
 		_, err := admit(t, []string{authenticate}, stub, newRequest(t))
 		if connect.CodeOf(err) != connect.CodeUnavailable {
-			t.Fatalf("error = %v, want unavailable", err)
-		}
-	})
-}
-
-func TestNew(t *testing.T) {
-	t.Run("substitutes a logger", func(t *testing.T) {
-		stub := &callerStub{answers: []answer{{err: errors.New("down")}}}
-
-		chain := New([]string{authenticate}, stub, nil)
-
-		if err := chain.Admit(t.Context(), newRequest(t)); connect.CodeOf(err) != connect.CodeUnavailable {
 			t.Fatalf("error = %v, want unavailable", err)
 		}
 	})

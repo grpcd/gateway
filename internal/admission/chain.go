@@ -32,23 +32,18 @@ type Caller interface {
 type Chain struct {
 	steps  []connect.Spec
 	caller Caller
-	log    *slog.Logger
 }
 
 // New builds the chain for procedures, in the order given, called over
 // caller. An empty list admits everything.
-func New(procedures []string, caller Caller, log *slog.Logger) *Chain {
-	if log == nil {
-		log = logger.NewNullLogger()
-	}
-
+func New(procedures []string, caller Caller) *Chain {
 	steps := make([]connect.Spec, 0, len(procedures))
 	for _, procedure := range procedures {
 		spec := connect.Spec{StreamType: connect.StreamTypeUnary, Procedure: procedure}
 		steps = append(steps, spec)
 	}
 
-	return &Chain{steps: steps, caller: caller, log: log}
+	return &Chain{steps: steps, caller: caller}
 }
 
 // Configuration is the admission chain's: the procedures a request passes
@@ -109,7 +104,7 @@ func (c *Chain) refuse(ctx context.Context, procedure string, err error) error {
 
 	code := connect.CodeOf(err)
 
-	c.log.InfoContext(ctx, "Admission refused",
+	logger.FromContext(ctx).InfoContext(ctx, "Admission refused",
 		slog.String("procedure", procedure),
 		slog.String("code", code.String()),
 		slog.Any("error", err))

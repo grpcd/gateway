@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,7 +117,7 @@ func serve(t *testing.T, transport http.RoundTripper, admit Admit, request *http
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	New(transport, admit, slog.New(slog.DiscardHandler)).ServeHTTP(recorder, request)
+	New(transport, admit).ServeHTTP(recorder, request)
 
 	return recorder
 }
@@ -297,7 +296,7 @@ func TestServeHTTP(t *testing.T) {
 		transport := failing(errUnreachable)
 
 		w := responsewriter.NewBroken()
-		New(transport, admitAll, slog.New(slog.DiscardHandler)).ServeHTTP(w, newRequest(t, "application/json"))
+		New(transport, admitAll).ServeHTTP(w, newRequest(t, "application/json"))
 
 		if w.Status != http.StatusServiceUnavailable {
 			t.Errorf("status = %d, want 503 attempted", w.Status)
@@ -371,16 +370,5 @@ func TestServeHTTP(t *testing.T) {
 
 		assertRPC(t, spans[0])
 		assertFailed(t, spans[0], "unauthenticated")
-	})
-}
-
-func TestNew(t *testing.T) {
-	t.Run("substitutes a logger", func(t *testing.T) {
-		recorder := httptest.NewRecorder()
-		New(failing(errUnreachable), admitAll, nil).ServeHTTP(recorder, newRequest(t, "application/json"))
-
-		if recorder.Code != http.StatusServiceUnavailable {
-			t.Errorf("status = %d, want 503", recorder.Code)
-		}
 	})
 }

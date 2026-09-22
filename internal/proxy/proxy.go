@@ -34,7 +34,6 @@ type Handler struct {
 	admit  Admit
 	proxy  *httputil.ReverseProxy
 	errors *connecthttp.ErrorWriter
-	log    *slog.Logger
 }
 
 // New builds a Handler forwarding over transport, which is the discovery
@@ -42,15 +41,10 @@ type Handler struct {
 // path unchanged, and the transport routes it to the replica held for that
 // procedure. admit runs first, before the lookup, so a procedure it rewrites
 // is what is looked up.
-func New(transport http.RoundTripper, admit Admit, log *slog.Logger) *Handler {
-	if log == nil {
-		log = logger.NewNullLogger()
-	}
-
+func New(transport http.RoundTripper, admit Admit) *Handler {
 	h := &Handler{
 		admit:  admit,
 		errors: connecthttp.NewErrorWriter(),
-		log:    log,
 	}
 
 	h.proxy = &httputil.ReverseProxy{
@@ -74,22 +68,35 @@ func New(transport http.RoundTripper, admit Admit, log *slog.Logger) *Handler {
 // r, then forwards it under a `forward` span named by the procedure as
 // admission left it, which may differ.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	connectotel.Name(trace.SpanFromContext(r.Context()), r.URL.Path)
+	ctx := r.Context()
+	ctxSpan := trace.SpanFromContext(ctx)
+	log := logger.FromContext(ctx)
 
-	if err := h.admit(r.Context(), r); err != nil {
+	connectotel.Name(ctxSpan, r.URL.Path)
+
+	log.DebugContext(ctx, "Admitting", slog.String("procedure", r.URL.Path))
+
+	if err := h.admit(ctx, r); err != nil {
 		h.write(w, r, err)
 
 		return
 	}
 
-	ctxSpan := trace.SpanFromContext(r.Context())
+	log.DebugContext(ctx, "Admitted", slog.String("procedure", r.URL.Path))
+
 	tracer := ctxSpan.TracerProvider().Tracer(tracerName)
-	ctx, span := tracer.Start(r.Context(), "forward")
+	ctx, span := tracer.Start(ctx, "forward")
 	defer span.End()
 
 	connectotel.Name(span, r.URL.Path)
 
+	log.DebugContext(ctx, "Forwarding", slog.String("procedure", r.URL.Path))
+
+	// Returns once the whole response, streaming included, has been relayed
+	// to the client, or the client has gone.
 	h.proxy.ServeHTTP(w, r.WithContext(ctx))
+
+	log.DebugContext(ctx, "Forwarded", slog.String("procedure", r.URL.Path))
 }
 
 // forwardingError answers a request the transport could not carry: a path
@@ -103,7 +110,9 @@ func (h *Handler) forwardingError(w http.ResponseWriter, r *http.Request, err er
 		code, message = connect.CodeUnimplemented, "no such procedure"
 	}
 
-	h.log.InfoContext(r.Context(), "Forwarding failed",
+	ctx := r.Context()
+
+	logger.FromContext(ctx).InfoContext(ctx, "Forwarding failed",
 		slog.String("procedure", r.URL.Path),
 		slog.String("code", code.String()),
 		slog.Any("error", err))
@@ -115,12 +124,12 @@ func (h *Handler) forwardingError(w http.ResponseWriter, r *http.Request, err er
 // the framing of the protocol r speaks, so a gRPC, gRPC-Web, or Connect client
 // each reads it as an error of its own.
 func (h *Handler) write(w http.ResponseWriter, r *http.Request, err error) {
-	connectotel.Fail(trace.SpanFromContext(r.Context()), connect.CodeOf(err))
+	ctx := r.Context()
+
+	connectotel.Fail(trace.SpanFromContext(ctx), connect.CodeOf(err))
 
 	if writeErr := h.errors.Write(w, r, err); writeErr != nil {
-		h.log.WarnContext(
-			r.Context(),
-			"Failed to write error",
+		logger.FromContext(ctx).WarnContext(ctx, "Failed to write error",
 			slog.Any("error", writeErr))
 	}
 }

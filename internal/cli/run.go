@@ -117,7 +117,7 @@ func Run() int {
 
 	procedures := admissionCfg.Procedures
 	cnClient := connectclient.New(httpClient, discover.BaseURL, nil)
-	chain := admission.New(procedures, cnClient, log)
+	chain := admission.New(procedures, cnClient)
 
 	// grpcd is asked its own health over the connection, and each admission
 	// service is reported from the replica its procedure is on.
@@ -153,7 +153,7 @@ func Run() int {
 
 	// The gateway's own routes are longer patterns than "/", so the mux gives
 	// them precedence and everything else is forwarded.
-	host.HTTPHost.Mux.Handle("/", proxy.New(discovery, chain.Admit, log))
+	host.HTTPHost.Mux.Handle("/", proxy.New(discovery, chain.Admit))
 
 	lis, err := net.Listen("tcp", svcCfg.Address)
 	if err != nil {
