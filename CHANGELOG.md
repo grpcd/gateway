@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.4.2 - 2026-09-22
+#### Bug Fixes
+- use stdlib uuid - (3e994f6) - Nathan Blair
+
+- - -
+
 ## 0.4.1 - 2026-09-22
 #### Bug Fixes
 - bump otel - (0b0ea34) - Nathan Blair
